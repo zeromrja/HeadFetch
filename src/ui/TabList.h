@@ -3,6 +3,7 @@
 #include "../core/Scanner.h"
 #include "../core/Types.h"
 #include "../game/Offsets.h"
+#include "../net/AvatarFetcher.h"
 #include "../skin/SkinCropper.h"
 #include "../skin/TextureCache.h"
 #include "ImGuiLayer.h"
@@ -43,6 +44,7 @@ public:
 		resolveEGL();
 		installHooks();
 		installKeyboard();
+		Net::AvatarFetcher::instance().start();
 	}
 
 	void onHudRender(void* ctx, void* client){
@@ -69,14 +71,42 @@ public:
 				auto* nameStr = reinterpret_cast<const std::string*>(entry + Game::PLP_EntryName);
 				if(nameStr && !nameStr->empty() && nameStr->size() <= 64){
 					auto uuidStr = uuidToString(uuid);
-					HeadPixels head{};
-					if(Head::extractFromEntry(entry, head)){
-						std::lock_guard<std::mutex> hl(State::PendingHeadsMutex);
-						State::PendingHeads[uuidStr] = std::move(head);
+
+					bool remoteResolved = false;
+					{
+						std::lock_guard<std::mutex> rl(State::RemoteResolvedMutex);
+						remoteResolved = State::RemoteResolved.contains(uuidStr);
 					}
+					// Normal flow: crop the head from the skin the client already
+					// has loaded in memory. Skipped once/if a network avatar for
+					// this player has already resolved, so it doesn't get
+					// clobbered back to the local crop on a later packet.
+					if(!remoteResolved){
+						HeadPixels head{};
+						if(Head::extractFromEntry(entry, head)){
+							std::lock_guard<std::mutex> hl(State::PendingHeadsMutex);
+							State::PendingHeads[uuidStr] = std::move(head);
+						}
+					}
+
+					// Kick off (or no-op if already in flight/resolved) the
+					// network check. If the avatar endpoint doesn't respond
+					// with a png, this is a pure no-op and the local head
+					// above stays as-is.
+					auto* xuidStr = reinterpret_cast<const std::string*>(entry + Game::PLP_EntryXuid);
+					if(xuidStr && !xuidStr->empty() && xuidStr->size() <= 32){
+						Net::AvatarFetcher::instance().request(uuidStr, *xuidStr);
+					}
+
 					upsert(uuid, uuidStr, *nameStr);
 				}
 			}else if(action == 1){
+				auto uuidStr = uuidToString(uuid);
+				Net::AvatarFetcher::instance().forget(uuidStr);
+				{
+					std::lock_guard<std::mutex> rl(State::RemoteResolvedMutex);
+					State::RemoteResolved.erase(uuidStr);
+				}
 				m_cache.erase(std::remove_if(m_cache.begin(), m_cache.end(),
 					[&](const CachedPlayer& p){ return p.uuid == uuid; }),
 					m_cache.end());

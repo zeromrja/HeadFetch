@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace hf {
@@ -35,6 +36,12 @@ namespace State {
 	inline std::mutex               PlayersMutex;
 	inline std::unordered_map<std::string, HeadPixels> PendingHeads;
 	inline std::mutex               PendingHeadsMutex;
+
+	// UUIDs (as string) whose head texture came from the network avatar
+	// endpoint. While a uuid is in this set, the locally-cropped skin head
+	// is not allowed to overwrite it back in PendingHeads.
+	inline std::unordered_set<std::string> RemoteResolved;
+	inline std::mutex               RemoteResolvedMutex;
 	inline std::atomic<bool>        TabHeld{false};
 	inline std::atomic<double>      LastHudTime{0.0};
 
