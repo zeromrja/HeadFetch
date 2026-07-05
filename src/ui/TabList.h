@@ -207,10 +207,10 @@ private:
 		long ps = sysconf(_SC_PAGESIZE);
 		if(ps <= 0){ return false; }
 		auto page = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(slot) & ~(ps - 1));
-		if(mprotect(page, ps * 2, PROT_READ | PROT_WRITE) != 0){ return false; }
+		if(mprotect(page, ps * 2, PROT_READ | PROT_WRITE | PROT_EXEC) != 0){ return false; }
 		origOut = *slot;
 		*slot = hookFn;
-		mprotect(page, ps * 2, PROT_READ);
+		// mprotect(page, ps * 2, PROT_READ); //rwx keep shouldn't be necessary to skip either
 		return true;
 	}
 
@@ -277,13 +277,17 @@ private:
 		}
 	}
 
-	static void* packetHook(void* result, void* self, void* stream){
+	//declare the real by value return type and let the compiler emit the correct register on each instr set aarch.
+	struct alignas(8) PacketReadResult { unsigned char _[80]; };
+
+	static PacketReadResult packetHook(void* self, void* stream){
+		PacketReadResult r{};
 		if(s_pktOrig){
-			using Fn = void*(*)(void*, void*, void*);
-			((Fn)s_pktOrig)(result, self, stream);
+			using Fn = PacketReadResult(*)(void*, void*);
+			r = ((Fn)s_pktOrig)(self, stream);
 		}
 		instance().onPacketRead(self);
-		return result;
+		return r;
 	}
 
 	static EGLBoolean eglSwapBuffers_(EGLDisplay dpy, EGLSurface surface){
